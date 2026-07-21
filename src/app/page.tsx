@@ -1,65 +1,105 @@
-import Image from "next/image";
 
-export default function Home() {
+'use client';
+
+import { useEffect, useRef, useState, useCallback } from 'react';
+import ResearchContainer from '../components/ResearchContainer';
+import TopicForm from '../components/TopicForm';
+import ProgressIndicator, { PIPELINE_STAGES } from '../components/ProgressIndicator';
+import ChatMessages from '../components/ChatMessages';
+import Footer from '../components/Footer';
+import { useResearchPipeline } from '../hooks/useResearchPipeline';
+
+export default function Root() {
+  const { status, result, error, startResearch } = useResearchPipeline();
+
+  // --- Stage-timer state (owned here, not inside ProgressIndicator) ---
+  const [currentStage, setCurrentStage] = useState(0);
+  const [stageProgress, setStageProgress] = useState(0);
+  const stageStartRef = useRef<number>(0);
+
+useEffect(() => {
+  if (status !== 'loading') return;
+
+  const cumulative: number[] = [];
+  let sum = 0;
+  for (const s of PIPELINE_STAGES) {
+    cumulative.push(sum);
+    sum += s.durationMs;
+  }
+
+  setCurrentStage(0);
+  setStageProgress(0);
+  const startTime = Date.now();
+
+  const tick = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const last = PIPELINE_STAGES.length - 1;
+
+    let stageIndex = last;
+    for (let i = 0; i < PIPELINE_STAGES.length; i++) {
+      const stageEnd = cumulative[i] + PIPELINE_STAGES[i].durationMs;
+      if (elapsed < stageEnd) {
+        stageIndex = i;
+        break;
+      }
+    }
+
+    const stageElapsed = elapsed - cumulative[stageIndex];
+    const pct = Math.min(100, (stageElapsed / PIPELINE_STAGES[stageIndex].durationMs) * 100);
+
+    setCurrentStage(stageIndex);
+    setStageProgress(pct);
+  }, 100);
+
+  return () => clearInterval(tick);
+}, [status]);
+
+  // snap the indicator to "done" the moment the real response lands,
+  // instead of waiting for the fake timer to visually catch up
+  useEffect(() => {
+    if (status === 'success' || status === 'error') {
+      setCurrentStage(PIPELINE_STAGES.length - 1);
+      setStageProgress(100);
+    }
+  }, [status]);
+
+  const handleSubmit = useCallback((topic: string) => {
+    startResearch(topic);
+  }, [startResearch]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <ResearchContainer status={status}>
+
+      {status === 'idle' && (
+        <div className="idle-state">
+          <h2>What would you like researched?</h2>
+          <p>Enter a topic below and the agents will get to work.</p>
+        </div>
+      )}
+
+      {status === 'loading' && (
+        <ProgressIndicator
+          isLoading={true}
+          currentStage={currentStage}
+          stageProgress={stageProgress}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+      )}
+
+      {status === 'error' && (
+        <div className="error-state">
+          <h2>Something went wrong</h2>
+          <p>{error}</p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+      )}
+
+      {status === 'success' && result && (
+        <ChatMessages result={result} />
+      )}
+
+      <TopicForm onSubmit={handleSubmit} isLoading={status === 'loading'} />
+
+      <Footer />
+
+    </ResearchContainer>
   );
 }
